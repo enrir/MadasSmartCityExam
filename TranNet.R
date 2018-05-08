@@ -35,6 +35,12 @@ speedFlow[is.na(speedFlow)]<- 10
 matOD <- as.data.table(read_excel("Transportmodeling.xlsx", 
                                       sheet = "MAT_OD"))
 
+# In the origin destionation matrix there are duplicates 
+sum(duplicated(matOD[,.(ZONE_O, ZONE_D)]))
+
+# I keep the sum by unique (unique, destionation)
+matOD <- matOD[ZONE_O!=ZONE_D, .(VEH_H=sum(VEH_H)), by=c('ZONE_O', 'ZONE_D')]
+
 matOD[, c('VEH_50', 'VEH_30', 'VEH_20'):= .(ceiling(VEH_H*0.5), round(VEH_H*0.3), VEH_H - round(VEH_H*0.3) - ceiling(VEH_H*0.5))]
 
 names(network) <- gsub(x = names(network),
@@ -79,6 +85,8 @@ network_complete[, c('LOAD', 'VLOAD', 'TIME_min') := list(0, 0, (DIST/SPEED)*60)
 
 # the are two edges with 0 capacity (they should have capacity 999999)
 network_complete[CAPACITY==0, CAPACITY:=999999]
+#I create a var to keep the ordering of the network edgelist
+network_complete[, order:=.I]
 #Load in igraph
 
 tr_net<-graph_from_data_frame(vertices = coord_complete, d= network_complete, directed = TRUE)
@@ -99,17 +107,23 @@ plot.igraph(tr_net,
 E(tr_net)$VLOAD <- 0
 
 # Assign the vehicles to the network
-for (cap in 4:6){
-#cap<- 4  
+for (cap in c('VEH_50', 'VEH_30', 'VEH_20')){
+#cap<- 'VEH_50'  
 print(cap)
-short_path <- shortest_paths(tr_net, matOD[matOD[[cap]]>0,]$ZONE_O, matOD[matOD[[cap]]>0,]$ZONE_D, mode = 'out',
-                               weights = E(tr_net)$TIME_min, output = "both",
-                               predecessors = FALSE, inbound.edges = FALSE)
+
+# shortest_paths uses Dijkstra's algorithm for weighted graphs
+for (orig in unique(matOD$ZONE_O)){
+short_path <- shortest_paths(tr_net, orig, 
+                             to = matOD[ZONE_O==orig,]$ZONE_D, mode = 'out',
+                               weights = E(tr_net)$TIME_min, output = "both")
+
+# loop on sp
 
 for (i in 1:length(short_path$epath)){
-  E(tr_net, path=unlist(short_path$vpath[[i]]))$VLOAD <- 
-    (E(tr_net, path=unlist(short_path$vpath[[i]]))$VLOAD + matOD[i, (cap)])
-  }
+  E(tr_net, path=as.numeric(unlist(short_path$vpath[[i]])))$VLOAD <- 
+    (E(tr_net, path=unlist(short_path$vpath[[i]]))$VLOAD + matOD[ZONE_O==orig, get(cap)][i])
+  
+  }}
 
 #Retrive the vehicles, calculate the load and update speed
 network_complete$VLOAD<- E(tr_net)$VLOAD
@@ -118,8 +132,10 @@ network_complete[, LOAD:= VLOAD / CAPACITY]
 # i join the network with the speedflow table to update the speed
 network_complete <- network_complete[speedFlow, .(A_NODE, B_NODE, DIST, LINK_TYPE, CAP_INDEX,
                               CAPACITY, DIR_CODE, LOAD, VLOAD, TIME_min, SPEED,
-                              SPEED_updated = SPEED *(1 - speed_red/100)),
+                              SPEED_updated = SPEED *(1 - speed_red/100), order),
                  on=.(CAP_INDEX, LOAD>=load_left, LOAD<=load_right),  nomatch=0]
+#sort the data
+setorder(network_complete, order)
 # update the speed in the network
 network_complete[, TIME_min:=(DIST/SPEED_updated)*60]
 E(tr_net)$SPEED <- network_complete$SPEED_updated
@@ -142,9 +158,12 @@ pal = brewer.pal( n=6 , 'YlOrBr')[2:6]
 
 V(tr_net)$size = 1
 V(tr_net)[1:17]$size = 3
-V(tr_net)[1:17]$color = 'red'
+V(tr_net)[1:17]$color = 'blue'
 
+png("loaded_network.png", 1024, 1024)
 plot.igraph(tr_net, vertex.label=NA,
             link=adjustcolor("red",alpha=0.5), edge.alpha = .5,
-            edge.arrow.size=.1, palette=pal)
+            edge.arrow.size=.02, palette=pal, edge.arrow.color='grey')
+title("Loaded Network \n Zones: blue nodes, edge colors: darker means higher flow/capacity")
+dev.off()
 
