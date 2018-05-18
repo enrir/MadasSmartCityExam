@@ -1,0 +1,78 @@
+---
+title: "Mobility and Transportation model"
+author: Roletto Enrico
+date: 18/May/2018
+output: html_notebook
+---
+
+# Invidivual Project for the course in Smart City and IoT @MADAS 2017/2018
+
+For the project we need these libraries
+```{r First_things, message=FALSE, warning=FALSE, paged.print=FALSE}
+rm(list=ls())
+gc()
+
+library(data.table)
+library(igraph)
+library(stringr)
+library(readxl)
+
+```
+
+Loading the data from the excel spreedsheet
+```{r Dataimp, message=FALSE, warning=FALSE}
+datamap <- as.data.table(read_excel("Transportmodeling.xlsx", 
+                           sheet = "DATAMAP"))
+network <- as.data.table(read_excel("Transportmodeling.xlsx", 
+                      sheet = "NETWORK"))
+coord <- as.data.table(read_excel("Transportmodeling.xlsx", 
+                      sheet = "COORD"))
+speedFlow <- as.data.table(read_excel("Transportmodeling.xlsx", 
+                    sheet = "SPEED-FLOW"))
+
+matOD <- as.data.table(read_excel("Transportmodeling.xlsx", 
+                                      sheet = "MAT_OD"))
+```
+
+Let's have a look at the speed flow table. In this table we have the percetange reduction in speed given a capacity index and a load level (numver of vehicles on the roads over the capacity). We will reshape these data in order to use them easely later:
+
+- we change the shape from wide to long
+- we create two columns representing the inferior and superior limit for each row.
+  
+
+```{r speed_flow}
+head(speedFlow)
+
+speedFlow[, SPEED_0:=0]
+
+speedFlow<- melt(speedFlow, id=1, measure.vars = c(2:7), 
+                 variable.name = 'load_left', value.name = 'speed_red')[,
+            load_left := as.numeric(str_extract(load_left, "([0-9])"))/10] 
+
+setorder(speedFlow, CAP_INDEX, load_left)
+
+speedFlow[, load_right:=shift(load_left,1, type = 'lead'), by=CAP_INDEX]
+speedFlow[is.na(speedFlow)]<- 10
+
+head(speedFlow, 3)
+tail(speedFlow, 3)
+
+```
+
+Let's have now a look at the origin destination table. 
+
+- We remove the duplicated rows, adding up the vehicles among duplicates
+- I create 3 new columns each one with anumber of vehicles according to the i rulncremental 30% - 20% of the total.
+
+
+```{r OD_mat}
+sum(duplicated(matOD[,.(ZONE_O, ZONE_D)]))
+matOD <- matOD[ZONE_O!=ZONE_D, .(VEH_H=sum(VEH_H)), by=c('ZONE_O', 'ZONE_D')]
+
+matOD[, c('VEH_50', 'VEH_30', 'VEH_20'):= .(ceiling(VEH_H*0.5), round(VEH_H*0.3), VEH_H - round(VEH_H*0.3) - ceiling(VEH_H*0.5))]
+
+names(network) <- gsub(x = names(network),
+                        pattern = "-",
+                        replacement = "_")
+```
+
