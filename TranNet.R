@@ -139,7 +139,7 @@ setorder(network_complete, order)
 # update the speed in the network
 network_complete[, TIME_min:=(DIST/SPEED_updated)*60]
 E(tr_net)$SPEED <- network_complete$SPEED_updated
-print('next step')
+E(tr_net)$TIME_min <- network_complete$TIME_min
 }
 
 
